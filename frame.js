@@ -17,7 +17,7 @@
 
     $.log('Loading Frame Module');
 
-    var $html, limit = 10, jackModBarLinks = false,
+    var $html, limit = 10, jackModBarLinks = true,
         msgGet = limit, mmGet = limit, modGet = limit, umodGet = limit;
 
     // Hijack modbar.
@@ -28,7 +28,7 @@
     }
     else {
         // Hack-y hack.  To be removed.
-        setTimeout(function () {
+        setInterval(function () {
             $('#tb-mailCount').attr("href", "#").addClass('tb-launch-fame');
             $('#tb-modmailcount').attr("href", "#").addClass('tb-launch-fame');
             $('#tb-queueCount').attr("href", "#").addClass('tb-launch-fame');
