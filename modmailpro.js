@@ -8,7 +8,7 @@
 // @include     *://*.reddit.com/message/moderator/*
 // @include     *://*.reddit.com/r/*/message/moderator/*
 // @downloadURL http://userscripts.org/scripts/source/167234.user.js
-// @version     3.1
+// @version     3.2
 // ==/UserScript==
 
 (function modmailpro() {
@@ -33,7 +33,8 @@
         unreadPage = location.pathname.match(/\/moderator\/(?:unread)\/?/), //TBUtils.isUnreadPage doesn't wok for this.  Needs or for moderator/messages.
         moreCommentThreads = [],
         unreadThreads = [],
-        newLoadedMessages = 0; //Because flowwit is a doesn't respect your reddit prefs. (TODO: make use of flowwit's callback.)
+        //newLoadedMessages = 0, //Because flowwit is a doesn't respect your reddit prefs. (TODO: make use of flowwit's callback.)
+        unprocessedThreads = $('.message-parent:not(.mmp-processed)');
 
     var separator = '<span class="separator">|</span>',
         spacer = '<span>&nbsp;&nbsp;&nbsp;&nbsp;</span>',
@@ -162,48 +163,42 @@
 
     initialize();
 
+    // NER support.
+    window.addEventListener("TBNewThings", function () {
+        initialize();
+    });
+
+
     // RES NER support.
     $('div.content').on('DOMNodeInserted', function (e) {
-        var sender = e.target;
-        var name = sender.className;
+        var $sender = $(e.target);
+        var event = new CustomEvent("TBNewThings");
 
-        if (name !== 'NERPageMarker' && !$(sender).hasClass('message-parent') && !$(sender).hasClass('realtime-new')) {
+        if (!$sender.hasClass('message-parent')) {
             return; //not RES, not flowwit, not load more comments, not realtime.
         }
-
-        if ($(sender).hasClass('realtime-new')) { //new thread
-            var attrib = $(sender).attr('data-fullname');
+        
+        if ($sender.hasClass('realtime-new')) { //new thread
+            var attrib = $sender.attr('data-fullname');
             if (attrib) {
                 setTimeout(function () {
                     $.log('realtime go');
-                    processThread($('[data-fullname="' + attrib + '"]'));
+                    var thread = $(".message-parent[data-fullname='" + attrib + "']");
+                    if (thread.length > 1) {
+                        $sender.remove();
+                        return
+                    } else {
+                        processThread(thread);
+                        //window.dispatchEvent(event);
+                    }
                 }, 500);
             }
             return;
-        } else if ($.inArray($(sender).attr('data-fullname'), moreCommentThreads) !== -1) { //check for 'load mor comments'
+        } else if ($.inArray($sender.attr('data-fullname'), moreCommentThreads) !== -1) { //check for 'load mor comments'
             setTimeout(function () {
                 $.log('LMC go');
-                processThread(sender);
-            }, 500);
-            return;
-
-        } else if ($(sender).hasClass('message-parent')) { //likely flowitt
-            newLoadedMessages++;
-
-            // flowwit is hard-coded to load 25 entries at a time, so we need to count them.
-            if (newLoadedMessages === 25) {
-                newLoadedMessages = 0;
-                setTimeout(function () {
-                    $.log('flowitt go');
-                    initialize();
-                }, 500);
-            }
-            return;
-
-        } else if (name === 'NERPageMarker') { //is res.
-            setTimeout(function () {
-                $.log('RES NER go');
-                initialize();
+                processThread($sender);
+                window.dispatchEvent(event);
             }, 500);
             return;
         }
@@ -212,10 +207,12 @@
     function initialize() {
         $.log('MMP init');
 
-        var threads = $('.message-parent');
+        unprocessedThreads = $('.message-parent:not(.mmp-processed)');
+        $.log(unprocessedThreads.length);
 
         // Add filter link to each title, if it doesn't already have one.
-        TBUtils.forEachChunked(threads, 35, 250, function (thread) {
+        TBUtils.forEachChunked(unprocessedThreads, 25, 350, function (thread) {
+            //$.log('running batch');
             processThread(thread);
         }, function complete() {
 
@@ -228,7 +225,7 @@
 
             // If set collapse all threads on load.
             if (collapsed) {
-                collapseall();
+                collapseall(unprocessedThreads);
             }
             
             // If we're on the unread page, don't filter anything.
@@ -242,42 +239,43 @@
             }
 
             // Set views.
-            setFilterLinks();
-            setReplied();
+            setFilterLinks(unprocessedThreads);
+            setReplied(unprocessedThreads);
             setView();
         });
     }
 
     function processThread(thread) {
-        if ($(thread).hasClass('mmp-processed')) {
+        var $thread = $(thread);
+        if ($thread.hasClass('mmp-processed')) {
             return;
         }
 
         // Set-up MMP info area.
-        $(thread).addClass('mmp-processed');
+        $thread.addClass('mmp-processed');
 
-        var threadID = $(thread).attr('data-fullname'),
-            entries = $(thread).find('.entry'),
+        var threadID = $thread.attr('data-fullname'),
+            entries = $thread.find('.entry'),
             count = (entries.length - 1),
             subreddit = getSubname(thread),
-            newThread = $(thread).hasClass('realtime-new');
+            newThread = $thread.hasClass('realtime-new');
 
-        $('<span class="info-area correspondent"></span>').insertAfter($(thread).find('.correspondent:first'));
+        $('<span class="info-area correspondent"></span>').insertAfter($thread.find('.correspondent:first'));
 
         // Only one feature needs thread, so disable it because it's costly.
         if (hideInviteSpam) {
-            $(thread).find('.subject:first').contents().filter(function () {
+            $thread.find('.subject:first').contents().filter(function () {
                 return this.nodeType === 3;
             }).wrap('<span class="message-title">');
         }
 
-        var infoArea = $(thread).find('.info-area');
+        var infoArea = $thread.find('.info-area');
         var spacer = '<span> </span>';
 
         $('</span><a style="color:orangered" href="javascript:;" class="filter-sub-link" title="Filter/unfilter thread subreddit."></a> <span>').appendTo(infoArea);
 
         if (count > 0) {
-            if ($(thread).hasClass('moremessages')) {
+            if ($thread.hasClass('moremessages')) {
                 count = count + '+';
                 moreCommentThreads.push(threadID);
             }
@@ -285,21 +283,21 @@
 
             // Only hide invite spam with no replies.    
         } else if (hideInviteSpam) {
-            var title = $(thread).find('.message-title').text().trim();
+            var title = $thread.find('.message-title').text().trim();
             if (title === INVITE || title === ADDED) {
-                $(thread).addClass('invitespam');
+                $thread.addClass('invitespam');
             }
         }
 
         $('<span class="replied-tag"></span>' + spacer).appendTo(infoArea);
 
-        $(thread).find('.correspondent.reddit.rounded a').parent().prepend(
+        $thread.find('.correspondent.reddit.rounded a').parent().prepend(
             '<a href="javascript:;" class="collapse-link">[-]</a> ');
 
         if (noRedModmail) {
-            if ($(thread).hasClass('spam')) {
-                $(thread).css('background-color', 'transparent');
-                $(thread).find('.subject').css('color', 'red');
+            if ($thread.hasClass('spam')) {
+                $thread.css('background-color', 'transparent');
+                $thread.find('.subject').css('color', 'red');
             }
         }
 
@@ -338,24 +336,27 @@
 
         // Deal with realtime threads.
         if (newThread) {
-            $(thread).removeClass('realtime-new');
-            $(thread).find('.correspondent:first').css('background-color', 'yellow');
-            $(thread).find('.child').remove(); //remove stupid 'false' child.
-            setView();
-            setFilterLinks();
+            $thread.removeClass('realtime-new');
+            $(infoArea).css('background-color', 'yellow');
+            setView($thread);
+            setFilterLinks($thread);
 
             if (collapsed) {
-                $(thread).find('.entry').hide();
-                $(thread).find('.expand-btn').hide();
-                $(thread).find('.collapse-link').text('[+]');
+                $thread.find('.entry').hide();
+                $thread.find('.expand-btn').hide();
+                $thread.find('.collapse-link').text('[+]');
             }
+            $thread.fadeIn("slow");
         }
     }
 
-    function setFilterLinks() {
+    function setFilterLinks(threads) {
+        if (threads === undefined) {
+            threads = $('.message-parent');
+        }
 
         // I think I could do this by just locating .filter-sub-link.
-        $('.message-parent').each(function () {
+        threads.each(function () {
             var subname = getSubname(this);
             var linktext = 'F';
 
@@ -367,8 +368,12 @@
         });
     }
 
-    function setReplied() {
-        $('.message-parent').each(function () {
+    function setReplied(threads) {
+        if (threads === undefined) {
+            threads = $('.message-parent');
+        }
+
+        threads.each(function () {
             var id = $(this).attr('data-fullname');
 
             if ($.inArray(id, getRepliedThreads()) !== -1) {
@@ -449,7 +454,8 @@
         });
     }
 
-    function collapseall() {
+    function collapseall(threads) {
+        $.log('collapsing all');
         collapsed = true;
         var link = ('.collapse-all-link');
 
@@ -457,7 +463,9 @@
         $(link).css(selectedCSS);
 
         // Hide threads.
-        var threads = $('.message-parent');
+        if (threads === undefined) {
+            threads = $('.message-parent');
+        }
 
         TBUtils.forEachChunked(threads, 35, 250, function (thread) {
             $(thread).find('.entry').hide();
@@ -494,17 +502,14 @@
 
 (function realtimemail() {
     if (!TBUtils.isModmail || !TBUtils.logged || !TBUtils.getSetting('ModMailPro', 'enabled', true)) return;
-    
+
     // Don't run if the page we're viewing is paginated, or if we're in the unread page.
     if (location.search.match(/before|after/) || location.pathname.match(/\/moderator\/(?:unread)\/?/)) return;
 
-    //var realtime = localStorage.getItem('realtime'), //huh?
-    var delay = 1 * 60000, // Default 1 min delay between requests.
-        refreshLimit = 10, // Default ten items per request.
-        sitetable = $('#siteTable').css('top', 0),
-        sitePos = sitetable.css('position'),
+    var delay = 30000, // Default .5 min delay between requests.
+        refreshLimit = 15, // Default five items per request.
         refreshLink = $('<li><a class="refresh-link" href="javascript:;" title="NOTE: this will only show new threads, not replies.">refresh</a></li>'),
-        updateURL = 'http://www.reddit.com/message/moderator.json-html',
+        updateURL = 'http://www.reddit.com/message/moderator?limit=',
         menulist = $('.menuarea ul.flat-list:first');
 
     var selectedCSS = {
@@ -518,89 +523,37 @@
 
     // Add refresh buttion.
     $(refreshLink).click(function () {
-        getNewThings(false);
+        $(refreshLink).css(selectedCSS);
+        getNewThings(refreshLimit);
+
     });
     menulist.append($(refreshLink).prepend('<span>&nbsp;&nbsp;&nbsp;&nbsp;</span>'));
 
     // Run RTMM.
-    if (TBUtils.getSetting('ModMailPro', 'realtime', false)) {
+    if (TBUtils.getSetting('ModMailPro', 'autoload', false)) {
         setInterval(function () {
-            getNewThings(true);
+            var count = TBUtils.getSetting('Notifier', 'modmailcount', 0);
+            if (count > 0) {
+                $(refreshLink).css(selectedCSS);
+                getNewThings(count);
+            }
         }, delay);
     }
 
     // Add new things
+    function getNewThings(limit) {
+        TBUtils.setSetting('Notifier', 'lastseenmodmail', new Date().getTime());
+        TBUtils.setSetting('Notifier', 'modmailcount', 0);
 
-    function getNewThings(auto) {
-        var url = updateURL,
-            html = [];
+        $.log('real time a gogo: ' + limit);
+        TBUtils.addToSiteTaable(updateURL + String(limit), function (resp) {
+            if (!resp) return;
+            var $things = $(resp).find('.message-parent').addClass('realtime-new').hide();
+            var $siteTable = $('#siteTable');
 
-        $(refreshLink).css(selectedCSS);
-
-        // If it's just an auto update, it's unlikely we'd get 100 new threads in three minutes.
-        if (auto) {
-            url = updateURL + '?limit=' + refreshLimit;
-        }
-
-        // Seems rather unlikely you'd get more than
-        $.get(url).success(function (response) {
-            $.log('checking for new mod mail: ' + url, true);
-
-            // Get list of thing ids of elements already on the page
-            var ids = [];
-
-            $('#siteTable div.thing').each(function () {
-                ids.push(this.getAttribute('data-fullname'));
-            });
-
-            // Get any things whos ids aren't already listed and compress their HTML
-            for (i in response.data) {
-                try {
-                    if (ids.indexOf(response.data[i].data.id) == -1) {
-                        html.push(TBUtils.compressHTML(response.data[i].data.content));
-                    }
-                }
-                // We don't need this catch, we just don't want the script to bomb on null ids.
-                catch (err) {}
-            }
+            $siteTable.prepend($things);
             $(refreshLink).css(unselectedCSS);
-            if (!html.length) return;
-
-            //Prepend to siteTable
-            insertHTML(html);
         });
-    }
-
-    // Insert new things into sitetable.
-    function insertHTML(html) {
-        var height = sitetable.css('top').slice(0, -2),
-            things = $(html.join(''))
-                .each(function () {
-                    $(this).addClass('realtime-new');
-                });
-
-        things.prependTo(sitetable)
-            .each(function () {
-                height -= this.offsetHeight;
-            });
-
-        // Scroll new items into view.
-        sitetable.stop().css('top', height).animate({
-            top: 0
-        }, 5000);
-
-        things.css({
-            opacity: 0.2
-        }).animate({
-            opacity: 1
-        }, 2000, 'linear');
-
-        // Trim items
-        $('#siteTable>div.thing:gt(99),#siteTable>.clearleft:gt(99),#siteTable tr.modactions:gt(200)').remove();
-
-        // Run flowwit callbacks on new things.
-        if (window.flowwit)
-            for (i in window.flowwit) window.flowwit[i](things.filter('.thing'));
     }
 })();
 
@@ -637,6 +590,7 @@
 })();
 
 
+
 (function modmailSwitch() {
     if (!TBUtils.isModmail || !TBUtils.logged || !TBUtils.getSetting('ModMailPro', 'enabled', true)) return;
 
@@ -671,7 +625,7 @@
     if (!TBUtils.isModmail || !TBUtils.logged || !TBUtils.getSetting('ModMailPro', 'enabled', true)) return;
     var ALL = 0, PRIORITY = 1, FILTERED = 2, REPLIED = 3, UNREAD = 4; //make a JSON object.
 
-    var VERSION = '3.1',
+    var VERSION = '3.2',
         filteredsubs = TBUtils.getSetting('ModMailPro', 'filteredsubs', []),
         showing = false,
         inbox = TBUtils.getSetting('ModMailPro', 'inboxstyle', PRIORITY),
@@ -691,7 +645,7 @@
         highlight = $('<a class="highlight" href="javascript:;">highlight new</a>'),
         autoexpand = $('<a class="autoexpand" href="javascript:;">auto expand replies</a>'),
         hideinvitespam = $('<a class="hideinvitespam" href="javascript:;" title="WARNING: slows loading">hide invite spam</a>'),
-        realtime = $('<a class="realtime" href="javascript:;" title="Loads new threads every two minutes.  Not replies, only threads.">realtime mail</a>');
+        autoload = $('<a class="autoload" href="javascript:;" title="Automatically load new mod mail">autoload mail</a>');
 
     var resetfilter = $('<label class="filter-count" style="font-weight:bold"></label><span> - subreddits filtered\
                        (</span><a href="javascript:;" class="reset-filter-link" title="WARNING: will reload page.">reset</a><span>)</span>');
@@ -752,9 +706,9 @@
         $(hideinvitespam).css(selectedCSS);
     }
 
-    if (TBUtils.getSetting('ModMailPro', 'realtime', false)) {
-        $(realtime).addClass('true');
-        $(realtime).css(selectedCSS);
+    if (TBUtils.getSetting('ModMailPro', 'autoload', false)) {
+        $(autoload).addClass('true');
+        $(autoload).css(selectedCSS);
     }
 
     // add settings button
@@ -769,7 +723,7 @@
     settingsDiv.append($(highlight).prepend(separator));
     settingsDiv.append($(autoexpand).prepend(separator));
     settingsDiv.append($(hideinvitespam).prepend(separator));
-    settingsDiv.append($(realtime).prepend(separator));
+    settingsDiv.append($(autoload).prepend(separator));
 
     $('<span>&nbsp;&nbsp;&nbsp;&nbsp;</span>').appendTo(settingsDiv);
     $(resetfilter).appendTo(settingsDiv);
@@ -829,7 +783,7 @@
     });
 
     // Settings have been changed.
-    $('body').delegate('.autocollapse, .redmodmail, .highlight, .autoexpand, .hideinvitespam, .realtime', 'click', function (e) {
+    $('body').delegate('.autocollapse, .redmodmail, .highlight, .autoexpand, .hideinvitespam, .autoload', 'click', function (e) {
         var sender = e.target;
 
         // Change link style.
@@ -847,6 +801,6 @@
         TBUtils.setSetting('ModMailPro', 'highlightnew', $(highlight).hasClass('true'));
         TBUtils.setSetting('ModMailPro', 'expandreplies', $(autoexpand).hasClass('true'));
         TBUtils.setSetting('ModMailPro', 'hideinvitespam', $(hideinvitespam).hasClass('true'));
-        TBUtils.setSetting('ModMailPro', 'realtime', $(realtime).hasClass('true'));
+        TBUtils.setSetting('ModMailPro', 'autoload', $(autoload).hasClass('true'));
     });
 })();

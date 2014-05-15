@@ -21,7 +21,8 @@
         hideActionedItems = TBUtils.getSetting('QueueTools', 'hideactioneditems', false),
         ignoreOnApprove = TBUtils.getSetting('QueueTools', 'ignoreonapprove', false),
         rtsComment = TBUtils.getSetting('QueueTools', 'rtscomment', true),
-        sortModSubs = TBUtils.getSetting('QueueTools', 'sortmodsubs', false);
+        sortModSubs = TBUtils.getSetting('QueueTools', 'sortmodsubs', false),
+        spamReportSub = 'reportthespammers';
     
     // Ideally, this should be moved somewhere else to be common with the removal reasons module
     // Retreival of log subreddit information could also be separated
@@ -172,7 +173,7 @@
         var noAction = ['A', 'INPUT', 'TEXTAREA', 'BUTTON'];
         $('.thing .entry').live('click', function (e) {
             if (noAction.indexOf(e.target.nodeName) + 1) return;
-            $(this).thing().find('input[type=checkbox]:first').click();
+            $(this).parent('.thing').find('input[type=checkbox]:first').click();
         });
 
         // Change sort order
@@ -309,9 +310,6 @@
                 $(thing).removeClass('spammed');
                 $(thing).addClass('approved');
             }
-
-
-
         });
 
         // Open reason dropdown when we remove something as ham.
@@ -324,7 +322,8 @@
             ignoreOnApproveset = true;
 
             if ($(thing).find('.reported-stamp').length) {
-                $(thing).find('a:contains("ignore reports")').click();
+                var ignore = $(thing).find('a:contains("ignore reports")')
+                if (ignore) ignore[0].click();
             }
         });
 
@@ -349,8 +348,15 @@
         }
         setThreshold($('.thing'));
 
+        // NER support. TODO: why doesn't this work?
+        window.addEventListener("TBNewThings", function () {
+            $.log("proc new things");
+            var things = $(".thing").not(".mte-processed");
+            processNewThings(things);
+        });        
+        
         function sortThings(order, asc) {
-            var pagination = $('#siteTable .nextprev');
+            var $sitetable = $('#siteTable');
             var things = $('#siteTable .thing').sort(function (a, b) {
                 (asc) ? (A = a, B = b) : (A = b, B = a);
 
@@ -369,9 +375,11 @@
                     return reportsA - reportsB;
                 }
             });
-            $('#siteTable').empty().append(things).append(pagination);
+            $sitetable.find('.thing').remove();
+            $sitetable.prepend(things);
         }
         sortThings(listingOrder, sortAscending);
+        
 
         // Toggle all expando boxes
         var expandosOpen = false;
@@ -424,6 +432,7 @@
 
         //Process new things loaded by RES or flowwit.
         function processNewThings(things) {
+            $.log("proc new things 2");
             //add class to processed threads.
             $(things).addClass('mte-processed');
 
@@ -435,27 +444,14 @@
             if (!viewingspam)
                 setThreshold(things);
         }
-
-        // Add callbacks for flowwit script
-        window.flowwit = window.flowwit || [];
-        window.flowwit.push(function (things) {
+        
+        // NER support. TODO: why doesn't this work?
+        window.addEventListener("TBNewThings", function () {
+            $.log("proc new things");
+            var things = $(".thing").not(".mte-processed");
             processNewThings(things);
         });
-
-        //RES NER support.
-        $('div.content').on('DOMNodeInserted', function (e) {
-
-            // Not RES.
-            if (e.target.className !== 'NERPageMarker') {
-                return;
-            }
-
-            // Wait for content to load.
-            setTimeout(function () {
-                var things = $(".thing").not(".mte-processed");
-                processNewThings(things);
-            }, 1000);
-        });
+        
 
         // Remove rate limit for expandos,removing,approving
         var rate_limit = window.rate_limit;
@@ -665,9 +661,8 @@
                 return;
             }
 
-            var confirmban = confirm("Are you sure you want to ban /u/" + user + " from /r/" + currentsub + "?");
-            var reason = prompt("What is the reason for banning this user? (leave blank for none)", "");
-            if (confirmban) {
+            var reason = prompt("Are you sure you want to ban /u/" + user + " from /r/" + currentsub + "?\n\nBan reason: (optional)", ""); 
+            if( reason != null){ 
                 postbanlog(currentsub, user, reason);
                 TBUtils.banUser(user, currentsub, reason, function() {
                     alert(user + " has been banned from /r/" + currentsub);
@@ -688,7 +683,7 @@
             var link = 'http://www.reddit.com/user/' + author,
                 title = 'Overview for ' + author;
             
-            TBUtils.postLink(link, title, 'reportthespammers', function (successful, submission) {
+            TBUtils.postLink(link, title, spamReportSub, function (successful, submission) {
                 if (!successful) {
                     rtsLink.innerHTML = '<span class="error" style="font-size:x-small">an error occured</span>';
                 }
@@ -701,8 +696,13 @@
                     }
 
                     // Post stats as a comment.
-                    if (!commentbody.length || !rtsComment)
+                    if (!commentbody.length || !rtsComment) {
+                        rtsLink.textContent = 'reported';
+                        rtsLink.href = submission.json.data.url;
+                        rtsLink.className = '';
                         return;
+                    }
+                        
 
                     TBUtils.postComment(submission.json.data.name, commentbody, function (successful, comment) {
                         if (!successful) {
@@ -738,7 +738,7 @@
         $('.subscription-box a.title').each(function () {
             var elem = $(this),
                 sr = elem.text(),
-                data = JSON.parse(TBUtils.getSetting('modtools', 'mq-' + TBUtils.logged + '-' + sr, '[0,0]'));
+                data = JSON.parse(TBUtils.getSetting('cache', 'mq-' + TBUtils.logged + '-' + sr, '[0,0]'));
             modSubs.push(sr);
 
             // Update count and re-cache data if more than an hour old.
@@ -758,7 +758,7 @@
 
         function updateModqueueCount(sr) {
             $.get('/r/' + sr + '/about/modqueue.json?limit=100').success(function (d) {
-                TBUtils.setSetting('modtools', 'mq-' + TBUtils.logged + '-' + sr, '[' + d.data.children.length + ',' + new Date().valueOf() + ']');
+                TBUtils.setSetting('cache', 'mq-' + TBUtils.logged + '-' + sr, '[' + d.data.children.length + ',' + new Date().valueOf() + ']');
                 $('.subscription-box a[href$="/r/' + sr + '/about/modqueue"]').text(d.data.children.length).attr('count', d.data.children.length);
                 sortSubreddits();
             });

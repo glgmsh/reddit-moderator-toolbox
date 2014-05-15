@@ -323,7 +323,6 @@
 
         // Regardless, update the text.  It doen't matter if you pass text for destory.
         $('.tb-overlay-label').text(text);
-
     };
     
     TBUtils.alert = function (message, callback) {
@@ -826,7 +825,38 @@
             }
         });
     };
-    
+
+    TBUtils.redditLogin = function (uname, pass, remeber, callback) {
+        $.post('/api/login', {
+            api_type: 'json',
+            passwd: pass,
+            user: uname,
+            rem: remeber
+        })
+        .success(function () {
+            if (typeof callback !== "undefined")
+                callback(true);
+        })
+        .error(function (error) {
+            $.log(error, true);
+            if (typeof callback !== "undefined")
+                callback(false, error);
+        });
+    };
+
+    TBUtils.getBanState = function (subreddit, user, callback) {
+        $.get("http://www.reddit.com/r/" + subreddit + "/about/banned/.json", { user: user }, function (data) {
+            var banned = data.data.children;
+
+            // If it's over or under exactly one item they are not banned or that is not their full name.
+            if (banned.length !== 1) {
+                return callback(false);
+            }
+
+            callback(true, banned[0].note, banned[0].date, banned[0].name);
+        });
+    };
+
     TBUtils.flairPost = function(postLink, subreddit, text, css, callback) {
         $.post('/api/flair', {
             api_type: 'json',
@@ -958,6 +988,25 @@
         return src.replace(/(\n+|\s+)?&lt;/g, '<').replace(/&gt;(\n+|\s+)?/g, '>').replace(/&amp;/g, '&').replace(/\n/g, '').replace(/child" >  False/, 'child">');
     };
 
+    TBUtils.addToSiteTaable = function (URL, callback) {
+        if (!URL || !callback) callback(null);
+
+        $.get(URL, function (resp) {
+            if (!resp) callback(null);
+
+            resp = resp.replace(/<script(.|\s)*?\/script>/g, '');
+            var $sitetable = $(resp).find('#siteTable');
+            $sitetable.find('.nextprev').remove();
+
+            if ($sitetable) {
+                callback($sitetable);
+            } else {
+                callback(null);
+            }
+
+        });
+    }
+
     // easy way to simulate the php html encode and decode functions
     TBUtils.htmlEncode = function (value) {
         //create a in-memory div, set it's inner text(which jQuery automatically encodes)
@@ -1042,7 +1091,7 @@
     // Private functions
     function registerSetting(module, setting) {
         // First parse out any of the ones we never want to save.
-        if (module === 'cache' || module === 'modtools') return;
+        if (module === 'cache') return;
 
         var keyName = module + '.' + setting;
 
@@ -1052,6 +1101,18 @@
             localStorage['Toolbox.Utils.settings'] = JSON.stringify(TBUtils.saneSort(settings));
         }
     }
+
+    // NER, load more comments, and mod frame support.
+    $('div.content').on('DOMNodeInserted', function (e) {
+        if (e.target.className != 'sitetable linklisting' && e.target.parentNode.className !== 'morecomments' && !$(e.target).hasClass('flowwit')) return;
+        $.log("TBNewThings firing" + ($(e.target).hasClass('flowwit')) ? ' (flowitt)' : '');
+        
+        // Wait a sec for stuff to laod.
+        setTimeout(function () {
+            var event = new CustomEvent("TBNewThings");
+            window.dispatchEvent(event);
+        }, 1000);
+    });
 
     window.onbeforeunload = function () {
         
