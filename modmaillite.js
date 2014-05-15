@@ -18,8 +18,9 @@
 
     var $sitetable = $('#siteTable'),//.hide(),
         $threads = $('.message-parent'),
-        subs = [],
-        entries = {};
+        divs = [],
+        entries = {},
+        subs = [];
 
     initialize();
 
@@ -28,13 +29,8 @@
         $threads.each(function () {
             processThread(this);
         });
-        $(subs).each(function () {
-            $div = $('\
-                <div class="tb-mml-subreddit">\
-                    <label class="tb-mml-expand" data-subreddit="'+ this + '">[+]</label><span class="subreddit">/r/' + this + '</span><span class="message-count"></span>\
-                </div>\
-                ').show();
-            $div.prependTo($sitetable);
+        $(divs).each(function () {
+            $sitetable.append($(this));
         });
         $sitetable.show();
 
@@ -55,11 +51,30 @@
             return;
         }
         $thread.addClass('mml-processed');
+        $thread.hide();
+
         var info = TBUtils.getThingInfo(thread);
+        //var subreddit = $(thing).closest('.message-parent').find('.correspondent.reddit.rounded a').text().replace('/r/', '');
         if ($.inArray(info.subreddit, subs) === -1) {
             subs.push(info.subreddit);
+
+            var $div = $('\
+                <div class="tb-mml-subreddit ' + info.subreddit + '">\
+                    <label class="tb-mml-expand" data-subreddit="' + info.subreddit + '">[+]</label><span class="subreddit">/r/' + info.subreddit + '</span><span class="message-count"></span>\
+                </div>\
+                ').show();
+
+            $thread.appendTo($div).hide();
+            divs.push($div);
+        } else {
+            
+            //var sel = String("." + info.subreddit + "");
+            //$.log(sel)
+            //document.getElementsByClassName(subreddit);
+            $thread.appendTo($(document.getElementsByClassName(info.subreddit)));
+            //$thread.appendTo("" + sel + "");
         }
-        $thread.hide();
+        
 
         /*
         var threadID = $(thread).attr('data-fullname'),
