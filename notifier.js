@@ -44,6 +44,7 @@
         debugMode = TBUtils.debugMode,
         betaMode = TBUtils.betaMode,
         consoleShowing = TBUtils.getSetting('Notifier', 'consoleshowing', false),
+        lockscroll = TBUtils.getSetting('Notifier', 'lockscroll', false),
         newLoad = true,
         now = new Date().getTime(),
         messageunreadlink = TBUtils.getSetting('Notifier', 'messageunreadlink', false),
@@ -142,7 +143,11 @@
             <div class="tb-debug-content">\
                 <textarea class="tb-debug-console" rows="20" cols="20"></textarea>\
             </div>\
-            <div class="tb-debug-footer" comment="for the looks">&nbsp;</div>\
+            <div class="tb-debug-footer" comment="for the looks">\
+                <label><input type="checkbox" id="tb-console-lockscroll" ' + ((lockscroll) ? "checked" : "") + '> lock scroll to bottom</label>\
+                <!--input class="tb-console-copy" type="button" value="copy text"-->\
+                <input class="tb-console-clear" type="button" value="clear console">\
+            </div>\
     </div>\
         ');
 
@@ -169,14 +174,15 @@
             ');
 
         var $consoleText = $('.tb-debug-console');
-        (function consoleLoop() {
-            setTimeout(function () {
-                $consoleText.val(TBUtils.log.join('\n'));
-                // TODO: add option to lock to bottom.
-                //$consoleText.scrollTop($consoleText[0].scrollHeight);
-                consoleLoop();
-            }, 500);
-        })();
+
+        setInterval(function () {
+            $consoleText.val(TBUtils.log.join('\n'));
+            if (lockscroll) {
+                $consoleText.scrollTop($consoleText[0].scrollHeight);
+            }
+            $.log('hi')
+            consoleLoop();
+        }, 500);
 
         if (consoleShowing) {
             $console.show();
@@ -218,6 +224,7 @@
         $.tooltip(hoverString, e);
     });
 
+    /// Console stuff
     // Show/hide console
     $('body').delegate('#tb-toggle-console, #tb-debug-hide', 'click', function () {
         if (!consoleShowing) {
@@ -227,12 +234,31 @@
         }
 
         consoleShowing = !consoleShowing;
-        TBUtils.setSetting('Notifier', 'consoleshowing', consoleShowing)
+        TBUtils.setSetting('Notifier', 'consoleshowing', consoleShowing);
     });
 
-    // Settings menu	
+    // Set console scroll
+    $('body').delegate('#tb-console-lockscroll', 'click', function () {
+        lockscroll = !lockscroll;
+        TBUtils.setSetting('Notifier', 'lockscroll', lockscroll);
+    });
+
+    /*
+    // Console copy... needs work
+    $('body').delegate('#tb-console-copy', 'click', function () {
+        lockscroll = !lockscroll;
+        TBUtils.setSetting('Notifier', 'lockscroll', lockscroll)
+    });
+    */
+
+    // Console clear
+    $('body').delegate('.tb-console-clear', 'click', function () {
+        TBUtils.log = [];
+    });
+    /// End console stuff
 
 
+    // Settings menu
     function showSettings() {
 
         // I probably should have stored "checked" instead of "on" will have to change that later. 
@@ -1003,9 +1029,16 @@
                 newCount = 0;
             
             for (var i = 0; i < json.data.children.length; i++) {
-                var messageTime = json.data.children[i].data.created_utc * 1000;
-                
-                if (!lastSeen || messageTime > lastSeen) {
+                var messageTime = json.data.children[i].data.created_utc * 1000,
+                    messageAuthor = json.data.children[i].data.author;
+                    
+                var isInviteSpam = false;                        
+                if (TBUtils.getSetting('ModMailPro', 'hideinvitespam', false) && (json.data.children[i].data.subject == 'moderator invited' || json.data.children[i].data.subject == 'moderator added')) {
+                    isInviteSpam = true;
+                    console.log("we have invite spam boys!");
+                }
+                        
+                if ((!lastSeen || messageTime > lastSeen) && messageAuthor !== TBUtils.logged && !isInviteSpam) {
                     newCount++;
                     if (!newIdx) { newIdx = i; }
                 }
@@ -1016,17 +1049,13 @@
             if (modmailNotifications && newCount > 0 && newCount !== modmailCount) {  // Don't show the message twice.
                 var notificationbody, messagecount = 0;
 
-                if (consolidatedMessages) {
+                if (consolidatedMessages || newCount>5) {
 
                     $.each(json.data.children, function (i, value) {
+                        
+                        var isInviteSpam = false;                        
                         if (TBUtils.getSetting('ModMailPro', 'hideinvitespam', false) && (value.data.subject == 'moderator invited' || value.data.subject == 'moderator added')) {
-                            invitespamid = value.data.name;
-
-                            $.post('/api/read_message', {
-                                id: invitespamid,
-                                uh: TBUtils.modhash,
-                                api_type: 'json'
-                            });
+                            isInviteSpam = true;
                         }
 
                         var subreddit = value.data.subreddit,
@@ -1034,13 +1063,15 @@
 
                         // Prevent changing the message body, since this loops through all messages, again.
                         // In all honesty, all of this needs to be rewriten...
-                        messagecount++;
-                        if (messagecount > newCount) return false;
+                        if (author !== TBUtils.logged && !isInviteSpam) {                        
+                            messagecount++;
+                            if (messagecount > newCount) return false;
 
-                        if (!notificationbody) {
-                            notificationbody = 'from: ' + author + ', in:' + subreddit + '\n';
-                        } else {
-                            notificationbody = notificationbody + 'from: ' + author + ', in:' + subreddit + '\n';
+                            if (!notificationbody) {
+                                notificationbody = 'from: ' + author + ', in:' + subreddit + '\n';
+                            } else {
+                                notificationbody = notificationbody + 'from: ' + author + ', in:' + subreddit + '\n';
+                            }
                         }
                     });
 
@@ -1053,16 +1084,14 @@
                 } else {
                     $.each(json.data.children, function (i, value) {
 
+                        var isInviteSpam = false;                        
                         if (TBUtils.getSetting('ModMailPro', 'hideinvitespam', false) && (value.data.subject == 'moderator invited' || value.data.subject == 'moderator added')) {
-                            invitespamid = value.data.name;
-
-                            $.post('/api/read_message', {
-                                id: invitespamid,
-                                uh: TBUtils.modhash,
-                                api_type: 'json'
-                            });
+                            isInviteSpam = true;
                         }
-
+                        
+                        var author = value.data.author;
+                        
+                        if (author !== TBUtils.logged && !isInviteSpam) {
                         // Sending 100 messages, since this loops through all messages, again.
                         // In all honesty, all of this needs to be rewriten...
                         messagecount++;
@@ -1074,6 +1103,7 @@
                         modmailpermalink = value.data.id;
 
                         TBUtils.notification('Modmail: /r/' + modmailsubreddit + ' : ' + modmailsubject, modmailbody, 'http://www.reddit.com/message/messages/' + modmailpermalink);
+                        }
                     });
 
                 }
