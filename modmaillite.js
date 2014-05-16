@@ -12,7 +12,7 @@
 
 
 (function modmaillite() {
-    if (!TBUtils.isModmail || !TBUtils.logged || !TBUtils.getSetting('ModMailLite', 'enabled', true)) return;
+    if (!TBUtils.isModmail || !TBUtils.logged || !TBUtils.getSetting('ModMailLite', 'enabled', false)) return;
 
     $.log('Loading MML Module');
 
